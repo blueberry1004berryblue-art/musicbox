@@ -1,6 +1,6 @@
 {
-  "name": "My Music Player",
-  "short_name": "MusicPlay",
+  "name": "Music Box",
+  "short_name": "Music Box",
   "start_url": "index.html",
   "display": "standalone",
   "background_color": "#121212",
