@@ -1,6 +1,6 @@
 {
-  "name": "Music Box",
-  "short_name": "Music Box",
+  "name": "車再生アプリ",
+  "short_name": "車再生アプリ",
   "start_url": "index.html",
   "display": "standalone",
   "background_color": "#121212",
