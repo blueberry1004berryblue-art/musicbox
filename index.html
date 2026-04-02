@@ -62,6 +62,11 @@
 </div>
 
 <script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js').then(() => {
+            console.log('Service Worker Registered');
+        });
+    }
     const jsmediatags = window.jsmediatags;
     const folderInput = document.getElementById('folderInput');
     const audioPlayer = document.getElementById('audioPlayer');
