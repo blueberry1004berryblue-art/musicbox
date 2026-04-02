@@ -1,2 +1,4 @@
-// sw.js (中身はこれだけ)
-self.addEventListener('fetch', function(event) {});
+// sw.js
+self.addEventListener('fetch', function(event) {
+    // 何もしなくても、これがあるだけでPWAとして認識されます
+});

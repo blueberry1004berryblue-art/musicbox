@@ -1,7 +1,7 @@
 {
   "name": "車再生アプリ",
   "short_name": "車再生",
-  "start_url": "index.html", 
+  "start_url": "index.html",
   "display": "standalone",
   "icons": [
     {
