@@ -17,4 +17,12 @@
       "type": "image/png"
     }
   ]
+"file_handlers": [
+  {
+    "action": "/index.html",
+    "accept": {
+      "audio/*": [".mp3", ".m4a", ".wav"]
+    }
+  }
+]
 }
