@@ -37,6 +37,7 @@
             padding: 12px; border-bottom: 1px solid #333; cursor: pointer;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
+        #playlist li:hover { background: #222; }
         #playlist li.active { color: #1DB954; font-weight: bold; background: #1a1a1a; }
     </style>
 </head>
@@ -55,17 +56,19 @@
         <img id="coverImage" alt="Album Art">
     </div>
 
-    <div id="nowPlaying">曲を選択してください</div>
+    <div id="nowPlaying">起動中...</div>
     <audio id="audioPlayer" controls></audio>
 
     <ul id="playlist"></ul>
 </div>
 
 <script>
+    // 1. PWAのService Worker登録
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js');
     }
 
+    // 2. データベースの準備
     const db = new Dexie("MusicAppDB");
     db.version(1).stores({ songs: "++id, name, data" });
 
@@ -78,6 +81,7 @@
 
     let songList = [];
 
+    // 3. 起動時に保存された曲を自動で読み込む
     window.onload = async () => {
         const savedSongs = await db.songs.toArray();
         if (savedSongs.length > 0) {
@@ -85,9 +89,12 @@
             renderPlaylist();
             nowPlaying.textContent = "リストを読み込みました";
             playSong(0);
+        } else {
+            nowPlaying.textContent = "フォルダを選択してください";
         }
     };
 
+    // 4. フォルダ選択時にデータベースへ保存
     folderInput.addEventListener('change', async (e) => {
         const files = Array.from(e.target.files).filter(f => f.type.startsWith('audio/') || f.name.endsWith('.mp3'));
         if (files.length === 0) return;
@@ -125,15 +132,39 @@
         
         nowPlaying.textContent = song.name;
         
-        // ジャケット画像の読み取り
-        loadCoverArt(song.data);
+        // 5. ジャケット画像の読み取りと、Android通知欄への反映
+        loadCoverArt(song.data, (imageUrl) => {
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: song.name,         // 通知欄にファイル名（曲名）を表示
+                    artist: 'My Music Player', // アーティスト名
+                    album: 'Local Collection', // アルバム名
+                    artwork: [
+                        { src: imageUrl, sizes: '96x96',   type: 'image/png' },
+                        { src: imageUrl, sizes: '128x128', type: 'image/png' },
+                        { src: imageUrl, sizes: '192x192', type: 'image/png' },
+                        { src: imageUrl, sizes: '256x256', type: 'image/png' },
+                        { src: imageUrl, sizes: '384x384', type: 'image/png' },
+                        { src: imageUrl, sizes: '512x512', type: 'image/png' },
+                    ]
+                });
+
+                // 通知欄のスキップボタンを有効化
+                navigator.mediaSession.setActionHandler('previoustrack', () => {
+                    if (index > 0) playSong(index - 1);
+                });
+                navigator.mediaSession.setActionHandler('nexttrack', () => {
+                    if (index < songList.length - 1) playSong(index + 1);
+                });
+            }
+        });
 
         Array.from(playlist.children).forEach((li, i) => {
             li.className = (i === index) ? 'active' : '';
         });
     }
 
-    function loadCoverArt(fileBlob) {
+    function loadCoverArt(fileBlob, callback) {
         window.jsmediatags.read(fileBlob, {
             onSuccess: function(tag) {
                 const pic = tag.tags.picture;
@@ -142,26 +173,31 @@
                     for (let i = 0; i < pic.data.length; i++) {
                         base64 += String.fromCharCode(pic.data[i]);
                     }
-                    coverImage.src = `data:${pic.format};base64,${window.btoa(base64)}`;
+                    const imageUrl = `data:${pic.format};base64,${window.btoa(base64)}`;
+                    coverImage.src = imageUrl;
                     coverImage.style.display = 'block';
                     placeholder.style.display = 'none';
+                    if (callback) callback(imageUrl); 
                 } else {
-                    showDefaultCover();
+                    showDefaultCover(callback);
                 }
             },
             onError: function() {
-                showDefaultCover();
+                showDefaultCover(callback);
             }
         });
     }
 
-    function showDefaultCover() {
+    function showDefaultCover(callback) {
+        const fallbackUrl = 'https://via.placeholder.com/512';
         coverImage.style.display = 'none';
         placeholder.style.display = 'block';
+        if (callback) callback(fallbackUrl);
     }
 
     audioPlayer.onended = () => {
-        let currentIndex = songList.findIndex(f => f.name === nowPlaying.textContent.replace('再生中: ', '').replace('[タップして再生] ', ''));
+        let currentText = nowPlaying.textContent.replace('再生中: ', '').replace('[タップして再生] ', '');
+        let currentIndex = songList.findIndex(f => f.name === currentText);
         if (currentIndex !== -1 && currentIndex < songList.length - 1) {
             playSong(currentIndex + 1);
         }
