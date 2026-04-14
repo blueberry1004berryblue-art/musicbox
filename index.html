@@ -4,12 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Music Player</title>
+    <link rel="manifest" href="manifest.json">
+    
     <script src="jsmediatags.js"></script>
     <script src="dexie.js"></script>
+
     <style>
         body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; margin: 0; }
         .container { max-width: 500px; margin: auto; }
-        .upload-btn { background: #1DB954; color: white; padding: 15px 30px; border-radius: 30px; display: inline-block; cursor: pointer; margin-bottom: 20px; font-weight: bold; }
+        .upload-btn { background: #1DB954; color: white; padding: 15px 30px; border-radius: 30px; display: inline-block; cursor: pointer; margin-bottom: 20px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
         input[type="file"] { display: none; }
         #coverContainer { width: 280px; height: 280px; margin: 10px auto 20px; background: #282828; border-radius: 15px; overflow: hidden; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 25px rgba(0,0,0,0.5); }
         #coverImage { width: 100%; height: 100%; object-fit: cover; display: none; }
@@ -22,51 +25,58 @@
     </style>
 </head>
 <body>
+
 <div class="container">
     <h2>Music Player</h2>
     <label class="upload-btn">フォルダを選択<input type="file" id="folderInput" webkitdirectory directory multiple></label>
     <div id="coverContainer"><div id="placeholder">♪</div><img id="coverImage"></div>
-    <div id="nowPlaying">読み込み中...</div>
+    <div id="nowPlaying">起動中...</div>
     <audio id="audioPlayer" controls preload="metadata"></audio>
     <ul id="playlist"></ul>
 </div>
 
 <script>
-    // ライブラリが読み込めているかチェック
-    if (typeof Dexie === 'undefined') {
-        document.getElementById('nowPlaying').innerHTML = '<span style="color:red">dexie.jsが見つかりません</span>';
-    }
+    // ライブラリの読み込み確認
+    window.onload = async () => {
+        if (typeof Dexie === 'undefined' || typeof jsmediatags === 'undefined') {
+            nowPlaying.innerHTML = '<span style="color:red">エラー: ライブラリファイル(dexie.js等)がサーバーにありません。</span>';
+            return;
+        }
 
-    const db = new Dexie("MyMusicAppDB");
-    db.version(1).stores({ songs: "++id, name, data" });
+        const db = new Dexie("MyMusicAppDB");
+        db.version(1).stores({ songs: "++id, name, data" });
+        
+        try {
+            const saved = await db.songs.toArray();
+            if (saved.length > 0) { 
+                songList = saved; 
+                renderPlaylist(); 
+                nowPlaying.textContent = "準備完了"; 
+            } else {
+                nowPlaying.textContent = "フォルダから曲を選んでください";
+            }
+        } catch (e) {
+            nowPlaying.textContent = "エラー: ストレージが使えません";
+        }
+    };
+
     const audioPlayer = document.getElementById('audioPlayer');
     const nowPlaying = document.getElementById('nowPlaying');
     let songList = [];
 
-    window.onload = async () => {
-        // file:// では IndexedDB が使えないため try-catch で保護
-        try {
-            const saved = await db.songs.toArray();
-            if (saved.length > 0) { songList = saved; renderPlaylist(); nowPlaying.textContent = "準備完了"; }
-            else { nowPlaying.textContent = "曲を選んでください"; }
-        } catch (e) {
-            nowPlaying.innerHTML = '<span style="color:orange">サーバー(Render)にアップして開いてください</span>';
-        }
-    };
-
     document.getElementById('folderInput').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files).filter(f => f.name.match(/\.(mp3|m4a|alac|wav|flac)$/i));
         if (files.length === 0) return;
+        
         nowPlaying.textContent = "保存中...";
-        try {
-            await db.songs.clear();
-            for (const file of files) { await db.songs.add({ name: file.name, data: file }); }
-            songList = await db.songs.toArray();
-            renderPlaylist();
-            playSong(0);
-        } catch (err) {
-            alert("保存できません。file:// で開いていませんか？");
-        }
+        const db = new Dexie("MyMusicAppDB");
+        db.version(1).stores({ songs: "++id, name, data" });
+        
+        await db.songs.clear();
+        for (const file of files) { await db.songs.add({ name: file.name, data: file }); }
+        songList = await db.songs.toArray();
+        renderPlaylist();
+        playSong(0);
     });
 
     function renderPlaylist() {
@@ -83,6 +93,7 @@
     async function playSong(index) {
         const song = songList[index];
         if (!song) return;
+        
         nowPlaying.textContent = "読み込み中...";
         audioPlayer.pause();
         if (audioPlayer.src) URL.revokeObjectURL(audioPlayer.src);
@@ -95,7 +106,7 @@
             nowPlaying.textContent = song.name;
             setTimeout(() => loadCoverAndMedia(song), 200);
         }).catch(() => {
-            nowPlaying.textContent = "▶ 再生ボタンをタップ";
+            nowPlaying.textContent = "▶ タップして再生";
         });
 
         Array.from(document.getElementById('playlist').children).forEach((li, i) => {
@@ -104,7 +115,6 @@
     }
 
     function loadCoverAndMedia(song) {
-        if (typeof jsmediatags === 'undefined') return;
         jsmediatags.read(song.data, {
             onSuccess: (tag) => {
                 const pic = tag.tags.picture;
