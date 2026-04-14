@@ -96,7 +96,15 @@
 
     // 4. フォルダ選択時にデータベースへ保存
     folderInput.addEventListener('change', async (e) => {
-        const files = Array.from(e.target.files).filter(f => f.type.startsWith('audio/') || f.name.endsWith('.mp3'));
+
+	const files = Array.from(e.target.files).filter(f => 
+            f.type.startsWith('audio/') || 
+            f.name.endsWith('.mp3') || 
+            f.name.endsWith('.m4a') || 
+            f.name.endsWith('.alac')
+        );
+
+
         if (files.length === 0) return;
 
         nowPlaying.textContent = "保存中...";
