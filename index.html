@@ -10,33 +10,14 @@
     <style>
         body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; margin: 0; }
         .container { max-width: 500px; margin: auto; }
-        
-        /* フォルダ選択ボタン */
-        .upload-btn {
-            background: #1DB954; color: white; padding: 15px; border-radius: 30px;
-            display: inline-block; cursor: pointer; margin-bottom: 20px; font-weight: bold;
-        }
+        .upload-btn { background: #1DB954; color: white; padding: 15px; border-radius: 30px; display: inline-block; cursor: pointer; margin-bottom: 20px; font-weight: bold; }
         input[type="file"] { display: none; }
-
-        /* ジャケット画像表示エリア */
-        #coverContainer {
-            width: 250px; height: 250px; margin: 10px auto 20px;
-            background: #222; border-radius: 10px; overflow: hidden;
-            display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-        }
+        #coverContainer { width: 250px; height: 250px; margin: 10px auto 20px; background: #222; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         #coverImage { width: 100%; height: 100%; object-fit: cover; display: none; }
         #placeholder { font-size: 60px; color: #444; }
-
-        /* プレイヤー操作部分 */
         audio { width: 100%; margin: 10px 0; border-radius: 8px; }
-        
-        /* 再生リスト部分 */
         #playlist { list-style: none; padding: 0; text-align: left; max-height: 300px; overflow-y: auto; }
-        #playlist li {
-            padding: 12px; border-bottom: 1px solid #333; cursor: pointer;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
+        #playlist li { padding: 12px; border-bottom: 1px solid #333; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         #playlist li:hover { background: #222; }
         #playlist li.active { color: #1DB954; font-weight: bold; background: #1a1a1a; }
     </style>
@@ -45,32 +26,22 @@
 
 <div class="container">
     <h2>Music Player</h2>
-    
     <label class="upload-btn">
         フォルダを選択
         <input type="file" id="folderInput" webkitdirectory directory multiple>
     </label>
-
     <div id="coverContainer">
         <div id="placeholder">♪</div>
         <img id="coverImage" alt="Album Art">
     </div>
-
-    <div id="nowPlaying">起動中...</div>
+    <div id="nowPlaying">曲を選択してください</div>
     <audio id="audioPlayer" controls></audio>
-
     <ul id="playlist"></ul>
 </div>
 
 <script>
-    // --- 1. PWA Service Workerの登録 ---
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js').then(() => {
-            console.log('Service Worker Registered');
-        });
-    }
+    if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
 
-    // --- 2. データベース(Dexie)の設定 ---
     const db = new Dexie("MusicAppDB");
     db.version(1).stores({ songs: "++id, name, data" });
 
@@ -83,47 +54,30 @@
 
     let songList = [];
 
-    // --- 3. アプリ起動時の自動読み込み ---
     window.onload = async () => {
         const savedSongs = await db.songs.toArray();
         if (savedSongs.length > 0) {
             songList = savedSongs;
             renderPlaylist();
             nowPlaying.textContent = "リストを読み込みました";
-            playSong(0); // 1曲目をセット
-        } else {
-            nowPlaying.textContent = "フォルダを選択してください";
+            // 起動時はURLをセットするだけ（自動再生はブロックされやすいため）
+            loadSong(0); 
         }
     };
 
-    // --- 4. フォルダ選択・保存処理 ---
     folderInput.addEventListener('change', async (e) => {
-        // mp3, m4a(ALAC含む), alacを許可
         const files = Array.from(e.target.files).filter(f => 
-            f.type.startsWith('audio/') || 
-            f.name.endsWith('.mp3') || 
-            f.name.endsWith('.m4a') || 
-            f.name.endsWith('.alac')
+            f.type.startsWith('audio/') || f.name.endsWith('.mp3') || f.name.endsWith('.m4a') || f.name.endsWith('.alac')
         );
-
-        if (files.length === 0) {
-            alert('音楽ファイルが見つかりませんでした。');
-            return;
-        }
-
+        if (files.length === 0) return;
         nowPlaying.textContent = "保存中...";
-        await db.songs.clear(); // 前のデータを削除
-
-        for (const file of files) {
-            await db.songs.add({ name: file.name, data: file });
-        }
-
+        await db.songs.clear();
+        for (const file of files) { await db.songs.add({ name: file.name, data: file }); }
         songList = await db.songs.toArray();
         renderPlaylist();
         playSong(0);
     });
 
-    // --- 5. プレイリストの表示描画 ---
     function renderPlaylist() {
         playlist.innerHTML = '';
         songList.forEach((file, index) => {
@@ -134,71 +88,61 @@
         });
     }
 
-    // --- 6. 再生処理（通知欄連動含む） ---
+    // 「再生」を伴う処理
     async function playSong(index) {
-        const song = songList[index];
-        const url = URL.createObjectURL(song.data); 
-        
-        audioPlayer.src = url;
+        await loadSong(index);
         audioPlayer.play().catch(() => {
-            // 自動再生がブロックされた場合の表示
-            nowPlaying.textContent = `[タップで再生] ${song.name}`;
+            nowPlaying.textContent = `[タップして再生] ${songList[index].name}`;
         });
+    }
+
+    // 「読み込み」に集中する処理（秒数が出ない問題を解決）
+    async function loadSong(index) {
+        const song = songList[index];
+        if (!song) return;
+
+        // 古いメモリを解放
+        if (audioPlayer.src) URL.revokeObjectURL(audioPlayer.src);
+
+        const url = URL.createObjectURL(song.data);
+        audioPlayer.src = url;
         
+        // 【重要】データを強制的に読み込ませる
+        audioPlayer.load();
+
         nowPlaying.textContent = song.name;
-        
-        // ジャケット画像の読み込みと通知欄への反映
         loadCoverArt(song.data, (imageUrl) => {
             if ('mediaSession' in navigator) {
                 navigator.mediaSession.metadata = new MediaMetadata({
                     title: song.name,
                     artist: 'My Music Player',
-                    album: 'Local Collection',
-                    artwork: [
-                        { src: imageUrl, sizes: '96x96',   type: 'image/png' },
-                        { src: imageUrl, sizes: '192x192', type: 'image/png' },
-                        { src: imageUrl, sizes: '512x512', type: 'image/png' }
-                    ]
+                    artwork: [{ src: imageUrl, sizes: '512x512', type: 'image/png' }]
                 });
-
-                // 通知欄の操作ボタン設定
-                navigator.mediaSession.setActionHandler('previoustrack', () => {
-                    if (index > 0) playSong(index - 1);
-                });
-                navigator.mediaSession.setActionHandler('nexttrack', () => {
-                    if (index < songList.length - 1) playSong(index + 1);
-                });
+                navigator.mediaSession.setActionHandler('previoustrack', () => playSong(index > 0 ? index - 1 : 0));
+                navigator.mediaSession.setActionHandler('nexttrack', () => playSong(index < songList.length - 1 ? index + 1 : index));
             }
         });
 
-        // プレイリストのハイライト切り替え
         Array.from(playlist.children).forEach((li, i) => {
             li.className = (i === index) ? 'active' : '';
         });
     }
 
-    // --- 7. ジャケット画像の抽出 ---
     function loadCoverArt(fileBlob, callback) {
         window.jsmediatags.read(fileBlob, {
             onSuccess: function(tag) {
                 const pic = tag.tags.picture;
                 if (pic) {
                     let base64 = "";
-                    for (let i = 0; i < pic.data.length; i++) {
-                        base64 += String.fromCharCode(pic.data[i]);
-                    }
+                    for (let i = 0; i < pic.data.length; i++) base64 += String.fromCharCode(pic.data[i]);
                     const imageUrl = `data:${pic.format};base64,${window.btoa(base64)}`;
                     coverImage.src = imageUrl;
                     coverImage.style.display = 'block';
                     placeholder.style.display = 'none';
                     if (callback) callback(imageUrl); 
-                } else {
-                    showDefaultCover(callback);
-                }
+                } else { showDefaultCover(callback); }
             },
-            onError: function() {
-                showDefaultCover(callback);
-            }
+            onError: function() { showDefaultCover(callback); }
         });
     }
 
@@ -209,13 +153,10 @@
         if (callback) callback(fallbackUrl);
     }
 
-    // --- 8. 曲が終了した時の自動次曲再生 ---
     audioPlayer.onended = () => {
         let currentText = nowPlaying.textContent.replace('[タップして再生] ', '');
         let currentIndex = songList.findIndex(f => f.name === currentText);
-        if (currentIndex !== -1 && currentIndex < songList.length - 1) {
-            playSong(currentIndex + 1);
-        }
+        if (currentIndex !== -1 && currentIndex < songList.length - 1) playSong(currentIndex + 1);
     };
 </script>
 </body>
