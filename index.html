@@ -18,7 +18,7 @@
         }
         input[type="file"] { display: none; }
 
-        /* ジャケット画像エリア */
+        /* ジャケット画像表示エリア */
         #coverContainer {
             width: 250px; height: 250px; margin: 10px auto 20px;
             background: #222; border-radius: 10px; overflow: hidden;
@@ -28,10 +28,10 @@
         #coverImage { width: 100%; height: 100%; object-fit: cover; display: none; }
         #placeholder { font-size: 60px; color: #444; }
 
-        /* プレイヤー部分 */
+        /* プレイヤー操作部分 */
         audio { width: 100%; margin: 10px 0; border-radius: 8px; }
         
-        /* リスト部分 */
+        /* 再生リスト部分 */
         #playlist { list-style: none; padding: 0; text-align: left; max-height: 300px; overflow-y: auto; }
         #playlist li {
             padding: 12px; border-bottom: 1px solid #333; cursor: pointer;
@@ -63,12 +63,14 @@
 </div>
 
 <script>
-    // 1. PWAのService Worker登録
+    // --- 1. PWA Service Workerの登録 ---
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js');
+        navigator.serviceWorker.register('sw.js').then(() => {
+            console.log('Service Worker Registered');
+        });
     }
 
-    // 2. データベースの準備
+    // --- 2. データベース(Dexie)の設定 ---
     const db = new Dexie("MusicAppDB");
     db.version(1).stores({ songs: "++id, name, data" });
 
@@ -81,34 +83,36 @@
 
     let songList = [];
 
-    // 3. 起動時に保存された曲を自動で読み込む
+    // --- 3. アプリ起動時の自動読み込み ---
     window.onload = async () => {
         const savedSongs = await db.songs.toArray();
         if (savedSongs.length > 0) {
             songList = savedSongs;
             renderPlaylist();
             nowPlaying.textContent = "リストを読み込みました";
-            playSong(0);
+            playSong(0); // 1曲目をセット
         } else {
             nowPlaying.textContent = "フォルダを選択してください";
         }
     };
 
-    // 4. フォルダ選択時にデータベースへ保存
+    // --- 4. フォルダ選択・保存処理 ---
     folderInput.addEventListener('change', async (e) => {
-
-	const files = Array.from(e.target.files).filter(f => 
+        // mp3, m4a(ALAC含む), alacを許可
+        const files = Array.from(e.target.files).filter(f => 
             f.type.startsWith('audio/') || 
             f.name.endsWith('.mp3') || 
             f.name.endsWith('.m4a') || 
             f.name.endsWith('.alac')
         );
 
-
-        if (files.length === 0) return;
+        if (files.length === 0) {
+            alert('音楽ファイルが見つかりませんでした。');
+            return;
+        }
 
         nowPlaying.textContent = "保存中...";
-        await db.songs.clear();
+        await db.songs.clear(); // 前のデータを削除
 
         for (const file of files) {
             await db.songs.add({ name: file.name, data: file });
@@ -119,6 +123,7 @@
         playSong(0);
     });
 
+    // --- 5. プレイリストの表示描画 ---
     function renderPlaylist() {
         playlist.innerHTML = '';
         songList.forEach((file, index) => {
@@ -129,35 +134,34 @@
         });
     }
 
+    // --- 6. 再生処理（通知欄連動含む） ---
     async function playSong(index) {
         const song = songList[index];
         const url = URL.createObjectURL(song.data); 
         
         audioPlayer.src = url;
         audioPlayer.play().catch(() => {
-            nowPlaying.textContent = `[タップして再生] ${song.name}`;
+            // 自動再生がブロックされた場合の表示
+            nowPlaying.textContent = `[タップで再生] ${song.name}`;
         });
         
         nowPlaying.textContent = song.name;
         
-        // 5. ジャケット画像の読み取りと、Android通知欄への反映
+        // ジャケット画像の読み込みと通知欄への反映
         loadCoverArt(song.data, (imageUrl) => {
             if ('mediaSession' in navigator) {
                 navigator.mediaSession.metadata = new MediaMetadata({
-                    title: song.name,         // 通知欄にファイル名（曲名）を表示
-                    artist: 'My Music Player', // アーティスト名
-                    album: 'Local Collection', // アルバム名
+                    title: song.name,
+                    artist: 'My Music Player',
+                    album: 'Local Collection',
                     artwork: [
                         { src: imageUrl, sizes: '96x96',   type: 'image/png' },
-                        { src: imageUrl, sizes: '128x128', type: 'image/png' },
                         { src: imageUrl, sizes: '192x192', type: 'image/png' },
-                        { src: imageUrl, sizes: '256x256', type: 'image/png' },
-                        { src: imageUrl, sizes: '384x384', type: 'image/png' },
-                        { src: imageUrl, sizes: '512x512', type: 'image/png' },
+                        { src: imageUrl, sizes: '512x512', type: 'image/png' }
                     ]
                 });
 
-                // 通知欄のスキップボタンを有効化
+                // 通知欄の操作ボタン設定
                 navigator.mediaSession.setActionHandler('previoustrack', () => {
                     if (index > 0) playSong(index - 1);
                 });
@@ -167,11 +171,13 @@
             }
         });
 
+        // プレイリストのハイライト切り替え
         Array.from(playlist.children).forEach((li, i) => {
             li.className = (i === index) ? 'active' : '';
         });
     }
 
+    // --- 7. ジャケット画像の抽出 ---
     function loadCoverArt(fileBlob, callback) {
         window.jsmediatags.read(fileBlob, {
             onSuccess: function(tag) {
@@ -203,8 +209,9 @@
         if (callback) callback(fallbackUrl);
     }
 
+    // --- 8. 曲が終了した時の自動次曲再生 ---
     audioPlayer.onended = () => {
-        let currentText = nowPlaying.textContent.replace('再生中: ', '').replace('[タップして再生] ', '');
+        let currentText = nowPlaying.textContent.replace('[タップして再生] ', '');
         let currentIndex = songList.findIndex(f => f.name === currentText);
         if (currentIndex !== -1 && currentIndex < songList.length - 1) {
             playSong(currentIndex + 1);
