@@ -34,18 +34,18 @@
         <div id="placeholder">♪</div>
         <img id="coverImage" alt="Album Art">
     </div>
-    <div id="nowPlaying">曲を選択してください</div>
-    <audio id="audioPlayer" controls></audio>
+    <div id="nowPlaying">起動中...</div>
+    <audio id="audioPlayer" controls preload="auto"></audio>
     <ul id="playlist"></ul>
 </div>
 
 <script>
     if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
 
+    // データベース設定
     const db = new Dexie("MusicAppDB");
     db.version(1).stores({ songs: "++id, name, data" });
 
-    const folderInput = document.getElementById('folderInput');
     const audioPlayer = document.getElementById('audioPlayer');
     const playlist = document.getElementById('playlist');
     const nowPlaying = document.getElementById('nowPlaying');
@@ -54,63 +54,68 @@
 
     let songList = [];
 
+    // 起動時の処理
     window.onload = async () => {
-        const savedSongs = await db.songs.toArray();
-        if (savedSongs.length > 0) {
-            songList = savedSongs;
-            renderPlaylist();
-            nowPlaying.textContent = "リストを読み込みました";
-            // 起動時はURLをセットするだけ（自動再生はブロックされやすいため）
-            loadSong(0); 
+        try {
+            const savedSongs = await db.songs.toArray();
+            if (savedSongs.length > 0) {
+                songList = savedSongs;
+                renderPlaylist();
+                nowPlaying.textContent = "リストを読み込みました。曲を選んでください";
+            } else {
+                nowPlaying.textContent = "フォルダを選択してください";
+            }
+        } catch (e) {
+            nowPlaying.textContent = "データの読み込みに失敗しました";
         }
     };
 
-    folderInput.addEventListener('change', async (e) => {
+    // フォルダ選択と保存
+    document.getElementById('folderInput').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files).filter(f => 
-            f.type.startsWith('audio/') || f.name.endsWith('.mp3') || f.name.endsWith('.m4a') || f.name.endsWith('.alac')
+            f.name.match(/\.(mp3|m4a|alac|wav|flac)$/i)
         );
-        if (files.length === 0) return;
-        nowPlaying.textContent = "保存中...";
-        await db.songs.clear();
-        for (const file of files) { await db.songs.add({ name: file.name, data: file }); }
-        songList = await db.songs.toArray();
-        renderPlaylist();
-        playSong(0);
+        if (files.length === 0) {
+            alert("音楽ファイルが見つかりませんでした");
+            return;
+        }
+        nowPlaying.textContent = "スマホに保存中... (時間がかかります)";
+        try {
+            await db.songs.clear();
+            for (const file of files) {
+                await db.songs.add({ name: file.name, data: file });
+            }
+            songList = await db.songs.toArray();
+            renderPlaylist();
+            nowPlaying.textContent = "保存完了！曲を選んでください";
+        } catch (err) {
+            alert("保存に失敗しました。容量不足の可能性があります。");
+        }
     });
 
     function renderPlaylist() {
         playlist.innerHTML = '';
-        songList.forEach((file, index) => {
+        songList.forEach((song, index) => {
             const li = document.createElement('li');
-            li.textContent = file.name;
+            li.textContent = song.name;
             li.onclick = () => playSong(index);
             playlist.appendChild(li);
         });
     }
 
-    // 「再生」を伴う処理
+    // 再生メイン処理
     async function playSong(index) {
-        await loadSong(index);
-        audioPlayer.play().catch(() => {
-            nowPlaying.textContent = `[タップして再生] ${songList[index].name}`;
-        });
-    }
-
-    // 「読み込み」に集中する処理（秒数が出ない問題を解決）
-    async function loadSong(index) {
         const song = songList[index];
         if (!song) return;
 
-        // 古いメモリを解放
+        // 状態をリセット
+        nowPlaying.textContent = "読み込み中...";
         if (audioPlayer.src) URL.revokeObjectURL(audioPlayer.src);
 
         const url = URL.createObjectURL(song.data);
         audioPlayer.src = url;
-        
-        // 【重要】データを強制的に読み込ませる
-        audioPlayer.load();
 
-        nowPlaying.textContent = song.name;
+        // Androidのメディアコントロール連動
         loadCoverArt(song.data, (imageUrl) => {
             if ('mediaSession' in navigator) {
                 navigator.mediaSession.metadata = new MediaMetadata({
@@ -123,11 +128,22 @@
             }
         });
 
+        // プレイリストの見た目更新
         Array.from(playlist.children).forEach((li, i) => {
             li.className = (i === index) ? 'active' : '';
         });
+
+        // 強制再生
+        audioPlayer.load();
+        audioPlayer.play().then(() => {
+            nowPlaying.textContent = song.name;
+        }).catch(err => {
+            console.error(err);
+            nowPlaying.textContent = "タップして再生を開始してください";
+        });
     }
 
+    // ジャケット抽出
     function loadCoverArt(fileBlob, callback) {
         window.jsmediatags.read(fileBlob, {
             onSuccess: function(tag) {
@@ -139,24 +155,29 @@
                     coverImage.src = imageUrl;
                     coverImage.style.display = 'block';
                     placeholder.style.display = 'none';
-                    if (callback) callback(imageUrl); 
-                } else { showDefaultCover(callback); }
+                    if (callback) callback(imageUrl);
+                } else { showDefault(callback); }
             },
-            onError: function() { showDefaultCover(callback); }
+            onError: function() { showDefault(callback); }
         });
     }
 
-    function showDefaultCover(callback) {
-        const fallbackUrl = 'https://via.placeholder.com/512';
+    function showDefault(callback) {
         coverImage.style.display = 'none';
         placeholder.style.display = 'block';
-        if (callback) callback(fallbackUrl);
+        if (callback) callback('https://via.placeholder.com/512');
     }
 
+    // 次の曲へ
     audioPlayer.onended = () => {
-        let currentText = nowPlaying.textContent.replace('[タップして再生] ', '');
-        let currentIndex = songList.findIndex(f => f.name === currentText);
-        if (currentIndex !== -1 && currentIndex < songList.length - 1) playSong(currentIndex + 1);
+        const currentName = nowPlaying.textContent;
+        const index = songList.findIndex(s => s.name === currentName);
+        if (index !== -1 && index < songList.length - 1) playSong(index + 1);
+    };
+
+    // エラーハンドリング
+    audioPlayer.onerror = () => {
+        nowPlaying.textContent = "再生エラー: ファイル形式が未対応の可能性があります";
     };
 </script>
 </body>
